@@ -10,7 +10,7 @@ import telebot
 from google import genai
 from google.genai import types
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "9160345617:AAEoB_laQX7vO_A3RhtOTQiE6bZm5lj4dEo")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "9160345617:AAHgGOmh015rSFy2WMTyGYnlBzecKpkovZ4")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 # Admin cấu hình qua username và/hoặc numeric ID
