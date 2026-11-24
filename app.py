@@ -356,14 +356,33 @@ def on_input(m):
     bot.reply_to(m, render_output(raw, stats))
 
 
+def _extract_retry_after(err: Exception) -> int:
+    msg = str(err)
+    match = re.search(r"retry after\s+(\d+)|\"retry_after\"\s*:\s*(\d+)", msg, re.IGNORECASE)
+    if match:
+        val = int(match.group(1) or match.group(2))
+        return max(5, val + 2)
+    if "429" in msg or "Too Many Requests" in msg:
+        return 20
+    return 8
+
+
 def run_bot_polling() -> None:
+    # Nghỉ nhẹ ban đầu để tránh dồn request ngay lúc container vừa khởi động
+    time.sleep(2)
     while True:
         try:
             print("[BOT] Đang chạy polling Telegram...")
-            bot.infinity_polling(skip_pending=True, timeout=30, long_polling_timeout=30)
+            bot.infinity_polling(
+                skip_pending=True,
+                timeout=30,
+                long_polling_timeout=25,
+                interval=1.5,
+            )
         except Exception as err:
-            print(f"[BOT] Lỗi kết nối, thử lại sau 5s: {err}")
-            time.sleep(5)
+            wait_sec = _extract_retry_after(err)
+            print(f"[BOT] Tạm nghỉ {wait_sec}s do lỗi: {err}")
+            time.sleep(wait_sec)
 
 
 if __name__ == "__main__":
