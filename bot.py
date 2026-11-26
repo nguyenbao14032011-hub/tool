@@ -10,10 +10,9 @@ import telebot
 from google import genai
 from google.genai import types
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "9160345617:AAHgGOmh015rSFy2WMTyGYnlBzecKpkovZ4")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "9160345617:AAEoB_laQX7vO_A3RhtOTQiE6bZm5lj4dEo")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
-# Admin cấu hình qua username và/hoặc numeric ID
 ADMIN_USERNAME = "lionVnIos".lstrip("@").lower()
 ADMIN_IDS = {
     int(x.strip())
@@ -31,7 +30,7 @@ PACKAGES = {
 }
 SECONDS_PER_MONTH = 30 * 24 * 3600
 
-bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
+bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML", threaded=True)
 ai_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 
@@ -50,7 +49,7 @@ class HealthHandler(BaseHTTPRequestHandler):
 def start_web_server() -> None:
     port = int(os.getenv("PORT", "10000"))
     server = HTTPServer(("0.0.0.0", port), HealthHandler)
-    print(f"[WEB] Đang lắng nghe cổng {port}...")
+    print(f"[WEB] Listening on port {port}", flush=True)
     server.serve_forever()
 
 
@@ -141,7 +140,6 @@ def run_3000_layer_pipeline(raw_text: str, md5_hex: str) -> dict:
     src_bytes = raw_text.encode("utf-8")
     hex_vals = [int(ch, 16) for ch in md5_hex]
 
-    # Cụm 1 (0001-0450): Char
     ascii_sum = sum(src_bytes)
     bigram_score = sum(
         ((hex_vals[i] * 16 + hex_vals[i + 1]) / 255.0) * (1.0 + (i % 4) * 0.05)
@@ -156,7 +154,6 @@ def run_3000_layer_pipeline(raw_text: str, md5_hex: str) -> dict:
     ) / 450.0
     p_char = 0.5 + 0.5 * math.tanh(c1 * 3.5 + (bigram_score - 0.5) * 1.4)
 
-    # Cụm 2 (0451-0900): Parameters
     mean_v = sum(hex_vals) / 32.0
     var_v = sum((v - mean_v) ** 2 for v in hex_vals) / 32.0
     std_v = math.sqrt(var_v)
@@ -168,7 +165,6 @@ def run_3000_layer_pipeline(raw_text: str, md5_hex: str) -> dict:
     ) / 450.0
     p_param = 0.5 + 0.5 * math.tanh(c2 * 2.2 * noise_filter + (mean_v - 7.5) * 0.12)
 
-    # Cụm 3 (0901-1350): Algebra
     poly_terms = [
         0.6 * norm_params[i]
         + 0.3 * (norm_params[i] ** 2) * (1 if norm_params[i] >= 0 else -1)
@@ -181,7 +177,6 @@ def run_3000_layer_pipeline(raw_text: str, md5_hex: str) -> dict:
     ) / 225.0
     p_alg = 0.5 + 0.5 * math.tanh(c3 * 1.8)
 
-    # Cụm 4 (1351-1850): Matrix
     mat = [poly_terms[r * 8 : (r + 1) * 8] for r in range(4)]
     row_energies = [
         sum(mat[r][k] * mat[r][(k + r) % 8] for k in range(8)) / 8.0
@@ -193,7 +188,6 @@ def run_3000_layer_pipeline(raw_text: str, md5_hex: str) -> dict:
     ) / 500.0
     p_mat = 0.5 + 0.5 * math.tanh(c4 * 3.0 + sum(row_energies) * 0.35)
 
-    # Cụm 5 (1851-2300): MDA
     axes = [
         sum(poly_terms[i] * math.cos(i * 0.4) for i in range(32)) / 16.0,
         sum(poly_terms[i] * math.sin(i * 0.7) for i in range(32)) / 16.0,
@@ -206,7 +200,6 @@ def run_3000_layer_pipeline(raw_text: str, md5_hex: str) -> dict:
     ) / 450.0
     p_mda = 0.5 + 0.5 * math.tanh(c5 * 4.0 + mda_proj * 1.5)
 
-    # Cụm 6 (2301-2650): Probability
     prior = p_char * 0.14 + p_param * 0.18 + p_alg * 0.20 + p_mat * 0.24 + p_mda * 0.24
     markov_shift = (hex_vals[-1] - 7.5) / 30.0
     c6 = sum(
@@ -215,7 +208,6 @@ def run_3000_layer_pipeline(raw_text: str, md5_hex: str) -> dict:
     ) / 350.0
     p_prob = max(0.05, min(0.95, 0.5 + c6 * 2.2 + markov_shift))
 
-    # Cụm 7 (2651-3000): AI Core & Decision
     layer_signals = [p_char, p_param, p_alg, p_mat, p_mda, p_prob]
     weights = [0.10, 0.14, 0.16, 0.20, 0.18, 0.22]
     attn_scores = [math.exp((s - 0.5) * 2.5) * w for s, w in zip(layer_signals, weights)]
@@ -282,78 +274,90 @@ def render_output(raw: str, s: dict) -> str:
 
 @bot.message_handler(commands=["nap"])
 def cmd_nap(message):
-    if not is_admin(message):
-        bot.reply_to(message, f"🚫 Lệnh này chỉ dành cho admin {ADMIN_CONTACT}.")
-        return
-
-    parts = (message.text or "").strip().split()
-    if len(parts) != 3:
-        bot.reply_to(message, "⚠️ Cú pháp đúng: <code>/nap số_tháng id_người_mua</code>\nVí dụ: <code>/nap 1 123456789</code>")
-        return
-
     try:
-        months = int(parts[1])
-        target_id = int(parts[2])
-    except ValueError:
-        bot.reply_to(message, "⚠️ Số tháng và ID người mua phải là số nguyên hợp lệ.")
-        return
+        if not is_admin(message):
+            bot.reply_to(message, f"🚫 Lệnh này chỉ dành cho admin {ADMIN_CONTACT}.")
+            return
 
-    if months not in PACKAGES:
-        bot.reply_to(message, "📦 Gói hỗ trợ: <b>1</b> tháng (50k), <b>2</b> tháng (100k), <b>6</b> tháng (200k).")
-        return
+        parts = (message.text or "").strip().split()
+        if len(parts) != 3:
+            bot.reply_to(message, "⚠️ Cú pháp đúng: <code>/nap số_tháng id_người_mua</code>\nVí dụ: <code>/nap 1 123456789</code>")
+            return
 
-    new_exp = grant_subscription(target_id, months)
-    rem_str = format_remaining(new_exp)
-    price = PACKAGES[months]
+        try:
+            months = int(parts[1])
+            target_id = int(parts[2])
+        except ValueError:
+            bot.reply_to(message, "⚠️ Số tháng và ID người mua phải là số nguyên hợp lệ.")
+            return
 
-    bot.reply_to(
-        message,
-        f"✅ Đã nạp gói <b>{months} tháng ({price})</b> cho ID <code>{target_id}</code>\n"
-        f"⏳ Thời hạn còn lại: <b>{rem_str}</b>",
-    )
+        if months not in PACKAGES:
+            bot.reply_to(message, "📦 Gói hỗ trợ: <b>1</b> tháng (50k), <b>2</b> tháng (100k), <b>6</b> tháng (200k).")
+            return
 
-    try:
-        bot.send_message(
-            target_id,
-            f"🎉 Tài khoản ID <code>{target_id}</code> đã được kích hoạt gói <b>{months} tháng ({price})</b>!\n"
-            f"⏳ Thời hạn sử dụng: <b>{rem_str}</b> — Gửi chuỗi MD5 để bắt đầu.",
+        new_exp = grant_subscription(target_id, months)
+        rem_str = format_remaining(new_exp)
+        price = PACKAGES[months]
+
+        bot.reply_to(
+            message,
+            f"✅ Đã nạp gói <b>{months} tháng ({price})</b> cho ID <code>{target_id}</code>\n"
+            f"⏳ Thời hạn còn lại: <b>{rem_str}</b>",
         )
-    except Exception:
-        pass
+
+        try:
+            bot.send_message(
+                target_id,
+                f"🎉 Tài khoản ID <code>{target_id}</code> đã được kích hoạt gói <b>{months} tháng ({price})</b>!\n"
+                f"⏳ Thời hạn sử dụng: <b>{rem_str}</b> — Gửi chuỗi MD5 để bắt đầu.",
+            )
+        except Exception:
+            pass
+    except Exception as e:
+        print(f"[CMD_NAP ERR] {e}", flush=True)
 
 
 @bot.message_handler(commands=["start"])
 def on_start(m):
-    uid = m.from_user.id
-    active, exp = get_active_subscription(uid)
-    status_line = (
-        f"✅ Đã kích hoạt · Còn <b>{format_remaining(exp)}</b>"
-        if active
-        else "⛔ Chưa kích hoạt gói"
-    )
-    welcome = (
-        "⚡ <b>MD5 · 3000-LAYER ENGINE</b> 🧠\n"
-        f"🆔 ID của bạn: <code>{uid}</code> · {status_line}\n"
-        "📦 Gói: 1T (50k) · 2T (100k) · 6T (200k) · LH: " + ADMIN_CONTACT + "\n"
-        "🔑 <code>9e107d9d372bb6826bd81d3542a419d6</code>"
-    )
-    bot.reply_to(m, welcome)
+    try:
+        uid = m.from_user.id
+        active, exp = get_active_subscription(uid)
+        status_line = (
+            f"✅ Đã kích hoạt · Còn <b>{format_remaining(exp)}</b>"
+            if active
+            else "⛔ Chưa kích hoạt gói"
+        )
+        welcome = (
+            "⚡ <b>MD5 · 3000-LAYER ENGINE</b> 🧠\n"
+            f"🆔 ID của bạn: <code>{uid}</code> · {status_line}\n"
+            "📦 Gói: 1T (50k) · 2T (100k) · 6T (200k) · LH: " + ADMIN_CONTACT + "\n"
+            "🔑 <code>9e107d9d372bb6826bd81d3542a419d6</code>"
+        )
+        bot.reply_to(m, welcome)
+    except Exception as e:
+        print(f"[START ERR] {e}", flush=True)
 
 
 @bot.message_handler(func=lambda m: bool(m.text and m.text.strip()))
 def on_input(m):
-    uid = m.from_user.id
-    active, _ = get_active_subscription(uid)
-    if not active and not is_admin(m):
-        deny_access(m)
-        return
+    try:
+        uid = m.from_user.id
+        active, _ = get_active_subscription(uid)
+        if not active and not is_admin(m):
+            deny_access(m)
+            return
 
-    raw = m.text.strip()
-    bot.send_chat_action(m.chat.id, "typing")
-    md5_hex = to_md5(raw)
-    stats = run_3000_layer_pipeline(raw, md5_hex)
-    ai_core_refine(stats)
-    bot.reply_to(m, render_output(raw, stats))
+        raw = m.text.strip()
+        try:
+            bot.send_chat_action(m.chat.id, "typing")
+        except Exception:
+            pass
+        md5_hex = to_md5(raw)
+        stats = run_3000_layer_pipeline(raw, md5_hex)
+        ai_core_refine(stats)
+        bot.reply_to(m, render_output(raw, stats))
+    except Exception as e:
+        print(f"[INPUT ERR] {e}", flush=True)
 
 
 def _extract_retry_after(err: Exception) -> int:
@@ -361,27 +365,32 @@ def _extract_retry_after(err: Exception) -> int:
     match = re.search(r"retry after\s+(\d+)|\"retry_after\"\s*:\s*(\d+)", msg, re.IGNORECASE)
     if match:
         val = int(match.group(1) or match.group(2))
-        return max(5, val + 2)
+        return max(10, val + 5)
     if "429" in msg or "Too Many Requests" in msg:
-        return 20
-    return 8
+        return 30
+    return 10
 
 
 def run_bot_polling() -> None:
-    # Nghỉ nhẹ ban đầu để tránh dồn request ngay lúc container vừa khởi động
-    time.sleep(2)
+    time.sleep(5)
+    try:
+        bot.remove_webhook()
+    except Exception:
+        pass
+
     while True:
         try:
-            print("[BOT] Đang chạy polling Telegram...")
-            bot.infinity_polling(
+            print("[BOT] Polling started...", flush=True)
+            bot.polling(
+                non_stop=True,
                 skip_pending=True,
                 timeout=30,
                 long_polling_timeout=25,
-                interval=1.5,
+                interval=2,
             )
         except Exception as err:
             wait_sec = _extract_retry_after(err)
-            print(f"[BOT] Tạm nghỉ {wait_sec}s do lỗi: {err}")
+            print(f"[BOT] Polling error ({wait_sec}s): {err}", flush=True)
             time.sleep(wait_sec)
 
 
